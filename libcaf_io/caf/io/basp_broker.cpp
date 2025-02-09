@@ -203,6 +203,13 @@ behavior basp_broker::make_behavior() {
         return;
       }
       log::io::debug("write monitor_message: proxy = {}", proxy);
+
+      if (auto i = node_observers.find(proxy->node());
+          i != node_observers.end()) {
+        i->second.emplace_back(proxy->address());
+      } else {
+        node_observers.emplace(proxy->node(), std::vector{proxy->address()});
+      }
       // tell remote side we are monitoring this actor now
       auto hdl = route->hdl;
       instance.write_monitor_message(context(), get_buffer(hdl), proxy->node(),
@@ -346,6 +353,13 @@ behavior basp_broker::make_behavior() {
       auto lg = log::io::trace("nid = {}, aid = {}, fail_state = {}", nid, aid,
                                fail_state);
       proxies().erase(nid, aid, std::move(fail_state));
+    },
+    [this](delete_atom, const node_id& nid, const node_id& down_node,
+           const error& fail_state) {
+      log::io::debug("received down message for indirect node: {}", down_node);
+      emit_node_down_msg(down_node, fail_state);
+      instance.tbl().erase_indirect(down_node);
+      forward_node_down(nid, down_node, fail_state);
     },
     [this](unpublish_atom, const actor_addr& whom,
            uint16_t port) -> result<void> {
@@ -511,12 +525,18 @@ void basp_broker::purge_state(const node_id& nid) {
   // Destroy all proxies of the lost node.
   namespace_.erase(nid);
   // Cleanup all remaining references to the lost node.
-  for (auto& kvp : monitored_actors)
-    kvp.second.erase(nid);
+  for (auto it = monitored_actors.begin(); it != monitored_actors.end();) {
+    it->second.erase(nid);
+    if (it->second.empty()) {
+      it = monitored_actors.erase(it);
+      continue;
+    }
+    ++it;
+  }
 }
 
 void basp_broker::send_basp_down_message(const node_id& nid, actor_id aid,
-                                         error rsn) {
+                                         const error& rsn) {
   auto lg = log::io::trace("nid = {}, aid = {}, rsn = {}", nid, aid, rsn);
   auto path = instance.tbl().lookup(nid);
   if (!path) {
@@ -525,6 +545,20 @@ void basp_broker::send_basp_down_message(const node_id& nid, actor_id aid,
     return;
   }
   instance.write_down_message(context(), get_buffer(path->hdl), nid, aid, rsn);
+  instance.flush(*path);
+}
+
+void basp_broker::send_basp_down_message(const node_id& nid,
+                                         const node_id& down_node,
+                                         const error& rsn) {
+  auto path = instance.tbl().lookup(nid);
+  if (!path) {
+    log::io::info(
+      "cannot send exit message for node, no route to host: nid = {}", nid);
+    return;
+  }
+  instance.write_down_message(context(), get_buffer(path->hdl), nid, down_node,
+                              rsn);
   instance.flush(*path);
 }
 
@@ -682,16 +716,57 @@ void basp_broker::set_context(connection_handle hdl) {
   t_last_hop = &i->second.id;
 }
 
+void basp_broker::forward_node_down(const node_id& source,
+                                    const node_id& down_node,
+                                    const error& fail_state) {
+  std::vector<node_id> unreachableNodes;
+  unreachableNodes.emplace_back(down_node);
+
+  // send_basp_down_message takes the table lock
+  // temporarly save direct connected nodes
+  std::vector<node_id> directs = [&]()
+  {
+    std::unique_lock<std::mutex> guard{instance.tbl().mtx_};
+    for (auto it = instance.tbl().indirect_.begin();
+         it != instance.tbl().indirect_.end();) {
+      it->second.erase(down_node);
+      if (!it->second.empty()) {
+        ++it;
+        continue;
+      }
+      unreachableNodes.emplace_back(it->first);
+
+      it = instance.tbl().indirect_.erase(it);
+    }
+
+    std::vector<node_id> directNodes;
+    directNodes.reserve(instance.tbl().direct_by_nid_.size());
+    for (const auto& n : instance.tbl().direct_by_nid_) {
+      if (n.first != source)
+        directs.emplace_back(n.first);
+    }
+    return directNodes;
+  }();
+
+  for (const auto& unreachable : unreachableNodes) {
+    for (auto& direct : directs) {
+      send_basp_down_message(direct, unreachable, fail_state);
+    }
+    purge_state(unreachable);
+  }
+}
+
 void basp_broker::connection_cleanup(connection_handle hdl, sec code) {
   auto lg = log::io::trace("hdl = {}, code = {}", hdl, code);
   // Remove handle from the routing table, notify all observers, and clean up
   // any node-specific state we might still have.
   if (auto nid = instance.tbl().erase_direct(hdl)) {
-    emit_node_down_msg(nid, code);
-    purge_state(nid);
+    error errCode{code};
+    emit_node_down_msg(nid, errCode);
+    forward_node_down({}, nid, errCode);
   }
-  // Remove the context for `hdl`, making sure clients receive an error in case
-  // this connection was closed during handshake.
+  // Remove the context for `hdl`, making sure clients receive an error in
+  // case this connection was closed during handshake.
   auto i = ctx.find(hdl);
   if (i != ctx.end()) {
     auto& ref = i->second;

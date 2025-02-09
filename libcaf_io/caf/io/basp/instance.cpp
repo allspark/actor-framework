@@ -303,6 +303,20 @@ void instance::write_down_message(scheduler* ctx, byte_buffer& buf,
   write(*sys_, ctx, buf, hdr, &writer);
 }
 
+void instance::write_down_message(scheduler* ctx, byte_buffer& buf,
+                                  const node_id& dest_node,
+                                  const node_id& down_node, const error& rsn) {
+  auto lg = log::io::trace("dest_node = {}, down_node = {}, rsn = {}",
+                           dest_node, down_node, rsn);
+  auto writer = make_callback([&](binary_serializer& sink) {
+    return sink.apply(this_node_) && sink.apply(dest_node)
+           && sink.apply(down_node) && sink.apply(rsn);
+  });
+  header hdr{
+    message_type::down_message, 0, 0, 0, invalid_actor_id, invalid_actor_id};
+  write(*sys_, ctx, buf, hdr, &writer);
+}
+
 void instance::write_heartbeat(scheduler* ctx, byte_buffer& buf) {
   auto lg = log::io::trace("");
   header hdr{message_type::heartbeat, 0, 0, 0, invalid_actor_id,
@@ -478,18 +492,41 @@ connection_state instance::handle(scheduler* ctx, connection_handle hdl,
                          source.get_error());
         return serializing_basp_payload_failed;
       }
-      if (dest_node == this_node_)
-        callee_.proxy_announced(source_node, hdr.dest_actor);
-      else
+      callee_.proxy_announced(source_node, hdr.dest_actor);
+      if (dest_node != this_node_)
         forward(ctx, dest_node, hdr, *payload);
       break;
     }
     case message_type::down_message: {
-      // Deserialize payload.
       binary_deserializer source{*sys_, *payload};
       node_id source_node;
       node_id dest_node;
       error fail_state;
+      // forwarded down_message from neighbour nodes
+      if (hdr.source_actor == invalid_actor_id) {
+        node_id down_node;
+        // Deserialize payload.
+        if (!source.apply(source_node)  //
+            || !source.apply(dest_node) //
+            || !source.apply(down_node) //
+            || !source.apply(fail_state)) {
+          log::io::warning("unable to deserialize payload of down message: {}",
+                           source.get_error());
+          return serializing_basp_payload_failed;
+        }
+        if (dest_node != this_node_) {
+          break;
+        }
+        // Delay this message to make sure we don't skip in-flight messages.
+        auto msg_id = queue_.new_id();
+        auto ptr = make_mailbox_element(nullptr, make_message_id(),
+                                        delete_atom_v, source_node, down_node,
+                                        std::move(fail_state));
+        queue_.push(callee_.current_scheduler(), msg_id, callee_.this_actor(),
+                    std::move(ptr));
+        break;
+      }
+      // Deserialize payload.
       if (!source.apply(source_node)  //
           || !source.apply(dest_node) //
           || !source.apply(fail_state)) {
