@@ -38,7 +38,7 @@ bool monitor_message_valid(const header& hdr) {
 }
 
 bool down_message_valid(const header& hdr) {
-  return !zero(hdr.source_actor) && zero(hdr.dest_actor)
+  return zero(hdr.dest_actor)
          && !zero(hdr.payload_len) && zero(hdr.operation_data);
 }
 

@@ -185,6 +185,10 @@ public:
                           const node_id& dest_node, actor_id aid,
                           const error& rsn);
 
+  void write_down_message(scheduler* ctx, byte_buffer& buf,
+                          const node_id& dest_node, const node_id& down_node,
+                          const error& rsn);
+
   /// Writes a `heartbeat` to `buf`.
   void write_heartbeat(scheduler* ctx, byte_buffer& buf);
 

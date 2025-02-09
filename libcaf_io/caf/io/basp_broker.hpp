@@ -101,11 +101,15 @@ public:
   /// Automatically sets `endpoint_context::last_seen` to `clock().now()`.
   void set_context(connection_handle hdl);
 
+  void forward_node_down(const node_id& source, const node_id& down_node, const error& fail_state);
+
   /// Cleans up any state for `hdl`.
   void connection_cleanup(connection_handle hdl, sec code);
 
   /// Sends a basp::down_message message to a remote node.
-  void send_basp_down_message(const node_id& nid, actor_id aid, error err);
+  void send_basp_down_message(const node_id& nid, actor_id aid, const error& err);
+
+  void send_basp_down_message(const node_id& nid, const node_id& down_node, const error& rsn);
 
   // -- disambiguation for functions found in multiple base classes ------------
 
