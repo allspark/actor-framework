@@ -419,15 +419,16 @@ connection_state instance::handle(scheduler* ctx, connection_handle hdl,
                          source.get_error());
         return serializing_basp_payload_failed;
       }
-      if (dest_node != this_node_) {
-        forward(ctx, dest_node, hdr, *payload);
-        return await_header;
-      }
       auto last_hop = tbl_.lookup_direct(hdl);
       if (source_node != none && source_node != this_node_
           && last_hop != source_node
           && tbl_.add_indirect(last_hop, source_node))
         callee_.learned_new_node_indirectly(source_node);
+
+      if (dest_node != this_node_) {
+        forward(ctx, dest_node, hdr, *payload);
+        return await_header;
+      }
     }
     // fall through
     case message_type::direct_message: {
