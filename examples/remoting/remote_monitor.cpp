@@ -17,10 +17,12 @@ public:
   Config() {
     opt_group{custom_options_, "global"}
       .add(mode, "mode,m", "mode")
-      .add(client, "client", "client");
+      .add(client, "client", "client")
+      .add(id, "id", "id");
   }
 
   std::uint16_t mode{0};
+  std::uint16_t id{0};
   bool client{false};
 };
 
@@ -79,7 +81,7 @@ LookupActor::behavior_type createLookupActor(LookupActor::pointer self,
               self->println("[Lookup-{}] get next hop success: {}", mode,
                             actor->address());
 
-              //              self->mail(caf::get_atom_v)
+              //              self->mail(caf::registry_lookup_atom_v)
               //                .request(caf::actor_cast<LookupActor>(actor),
               //                caf::infinite) .then([rp](const TestActor& t)
               //                mutable { rp.deliver(t); });
@@ -139,7 +141,7 @@ ClientActor::behavior_type createClient(ClientActor::pointer self,
 int caf_main(caf::actor_system& system, const Config& cfg) {
   using namespace std::string_view_literals;
 
-  const std::uint16_t listenPort = BASE_PORT + cfg.mode;
+  const std::uint16_t listenPort = BASE_PORT + cfg.mode + cfg.id;
   if (auto r = system.middleman().open(listenPort, nullptr, true); !r) {
     system.println("failed open port {}, error: {}", listenPort, r.error());
     return 1;
@@ -167,6 +169,16 @@ int caf_main(caf::actor_system& system, const Config& cfg) {
   if (!node) {
     system.println("failed to connect, error: {}", node.error());
     return 2;
+  }
+
+  for (std::uint16_t m = 0; m < cfg.mode; ++m) {
+    auto l = system.middleman().connect("127.0.0.1", BASE_PORT + m);
+    if (!l) {
+      system.println("failed to connect to {}, error: {}", BASE_PORT + m,
+                     l.error());
+    } else {
+      system.println("connected to {}", BASE_PORT + m);
+    }
   }
 
   auto lookup = system.spawn(createLookupActor, cfg.mode,
