@@ -63,6 +63,8 @@ public:
   /// `true` if `dest` had an indirect route, otherwise `false`.
   bool erase_indirect(const node_id& dest);
 
+  std::pair<std::vector<node_id>, std::vector<node_id>> indirect_node_down(const node_id&);
+
   /// Returns the parent broker.
   abstract_broker* parent() {
     return parent_;
@@ -73,6 +75,7 @@ public:
 
   abstract_broker* parent_;
   mutable std::mutex mtx_;
+  std::vector<node_id> direct_;
   std::unordered_map<connection_handle, node_id> direct_by_hdl_;
   std::unordered_map<node_id, connection_handle> direct_by_nid_;
   std::unordered_map<node_id, node_id_set> indirect_;

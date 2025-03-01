@@ -78,6 +78,8 @@ node_id routing_table::erase_direct(const connection_handle& hdl) {
   direct_by_nid_.erase(i->second);
   node_id result = std::move(i->second);
   direct_by_hdl_.erase(i->first);
+  auto it = std::remove(direct_.begin(), direct_.end(), result);
+  direct_.erase(it, direct_.end());
   return result;
 }
 
@@ -90,9 +92,29 @@ bool routing_table::erase_indirect(const node_id& dest) {
   return true;
 }
 
+std::pair<std::vector<node_id>, std::vector<node_id>>
+routing_table::indirect_node_down(const node_id& down_node) {
+  std::vector<node_id> unreachableNodes;
+
+  std::unique_lock<std::mutex> guard{mtx_};
+  for (auto it = indirect_.begin(); it != indirect_.end();) {
+    it->second.erase(down_node);
+    if (!it->second.empty()) {
+      ++it;
+      continue;
+    }
+    unreachableNodes.emplace_back(it->first);
+
+    it = indirect_.erase(it);
+  }
+
+  return {std::move(unreachableNodes), direct_};
+}
+
 void routing_table::add_direct(const connection_handle& hdl,
                                const node_id& nid) {
   std::unique_lock<std::mutex> guard{mtx_};
+  direct_.emplace_back(nid);
   [[maybe_unused]] auto hdl_added = direct_by_hdl_.emplace(hdl, nid).second;
   [[maybe_unused]] auto nid_added = direct_by_nid_.emplace(nid, hdl).second;
   CAF_ASSERT(hdl_added && nid_added);

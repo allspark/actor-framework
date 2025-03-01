@@ -186,7 +186,7 @@ public:
                           const error& rsn);
 
   void write_down_message(scheduler* ctx, byte_buffer& buf,
-                          const node_id& dest_node, const node_id& down_node,
+                          const node_id& sender, const node_id& down_node,
                           const error& rsn);
 
   /// Writes a `heartbeat` to `buf`.
@@ -215,6 +215,12 @@ public:
   connection_state handle(scheduler* ctx, connection_handle hdl, header& hdr,
                           byte_buffer* payload);
 
+  void add_down_msg(const node_id&);
+
+  bool down_msg_seen(const node_id&) const;
+
+  void delete_old_down_msg(const actor_clock::time_point tp);
+
 private:
   void forward(scheduler* ctx, const node_id& dest_node, const header& hdr,
                byte_buffer& payload);
@@ -226,6 +232,9 @@ private:
   callee& callee_;
   message_queue queue_;
   detail::worker_hub<worker> hub_;
+
+  using ReceivedDownMessages = std::unordered_map<node_id, actor_clock::time_point>;
+  ReceivedDownMessages received_down_msg_;
 };
 
 /// @}
